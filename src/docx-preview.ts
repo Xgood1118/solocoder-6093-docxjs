@@ -41,6 +41,7 @@ export interface Options {
     h: typeof h;
     showNavigation: boolean;
     navigationDefaultLevel: number;
+    showSearch: boolean;
     userStyles: UserStyle[];
 }
 
@@ -67,6 +68,7 @@ export const defaultOptions: Options = {
     h: h,
     showNavigation: true,
     navigationDefaultLevel: 3,
+    showSearch: true,
     userStyles: []
 };
 
@@ -97,16 +99,30 @@ export async function renderAsync(data: Blob | any, bodyContainer: HTMLElement, 
 
     cleanupNavigation(bodyContainer, ops);
     cleanupSearch(ops);
+    cleanupExtraStyles(ops);
 
     injectUserStyles(styleContainer, ops);
 
     if (ops.showNavigation) {
-        buildNavigation(bodyContainer, styleContainer, ops);
+        buildNavigation(bodyContainer, ops);
     }
 
-    setupSearch(bodyContainer, styleContainer, ops);
+    if (ops.showSearch) {
+        setupSearch(bodyContainer, ops);
+    }
 
     return doc;
+}
+
+function cleanupExtraStyles(options: Options): void {
+    const className = options.className;
+    const attrs = ["data-docx-nav-styles", "data-docx-search-styles"];
+    for (const attr of attrs) {
+        const els = document.head.querySelectorAll(`style[${attr}="${className}"]`);
+        els.forEach(el => el.remove());
+    }
+    const userStyleEls = document.head.querySelectorAll(`style[data-docx-user-styles="${className}"]`);
+    userStyleEls.forEach(el => el.remove());
 }
 
 function injectUserStyles(styleContainer: HTMLElement, options: Options): void {
@@ -123,8 +139,8 @@ function injectUserStyles(styleContainer: HTMLElement, options: Options): void {
 
     const styleEl = document.createElement("style");
     styleEl.textContent = cssText;
-    styleEl.setAttribute("data-docx-user-styles", "true");
-    styleContainer.appendChild(styleEl);
+    styleEl.setAttribute("data-docx-user-styles", options.className);
+    document.head.appendChild(styleEl);
 }
 
 function cleanupNavigation(bodyContainer: HTMLElement, options: Options): void {
@@ -152,7 +168,7 @@ function cleanupSearch(options: Options): void {
     }
 }
 
-function buildNavigation(bodyContainer: HTMLElement, styleContainer: HTMLElement, options: Options): void {
+function buildNavigation(bodyContainer: HTMLElement, options: Options): void {
     const className = options.className;
     const headings = collectHeadings(bodyContainer, className);
 
@@ -298,7 +314,8 @@ function buildNavigation(bodyContainer: HTMLElement, styleContainer: HTMLElement
 
     const navStyleEl = document.createElement("style");
     navStyleEl.textContent = navStyle;
-    styleContainer.appendChild(navStyleEl);
+    navStyleEl.setAttribute("data-docx-nav-styles", className);
+    document.head.appendChild(navStyleEl);
 
     const navContainer = document.createElement("div");
     navContainer.className = `${className}-nav-container`;
@@ -341,25 +358,15 @@ function collectHeadings(container: HTMLElement, className: string): { element: 
     paragraphs.forEach((p) => {
         let level: number | null = null;
 
-        const outlineLevelAttr = p.getAttribute('data-outline-level');
-        if (outlineLevelAttr) {
-            const parsedLevel = parseInt(outlineLevelAttr, 10);
-            if (!isNaN(parsedLevel) && parsedLevel >= 1 && parsedLevel <= 9) {
-                level = parsedLevel;
-            }
-        }
-
-        if (level === null) {
-            const classList = Array.from(p.classList);
-            for (const cls of classList) {
-                if (cls.startsWith(`${className}_`)) {
-                    const styleId = cls.substring(className.length + 1);
-                    if (/^heading\d+$/i.test(styleId)) {
-                        const levelMatch = styleId.match(/heading(\d+)/i);
-                        if (levelMatch) {
-                            level = parseInt(levelMatch[1], 10);
-                            break;
-                        }
+        const classList = Array.from(p.classList);
+        for (const cls of classList) {
+            if (cls.startsWith(`${className}_`)) {
+                const styleId = cls.substring(className.length + 1);
+                if (/^heading\d+$/i.test(styleId)) {
+                    const levelMatch = styleId.match(/heading(\d+)/i);
+                    if (levelMatch) {
+                        level = parseInt(levelMatch[1], 10);
+                        break;
                     }
                 }
             }
@@ -367,7 +374,6 @@ function collectHeadings(container: HTMLElement, className: string): { element: 
 
         if (level !== null && level >= 1 && level <= 9) {
             const id = `docx-heading-${idCounter++}`;
-            p.id = id;
             headings.push({
                 element: p as HTMLElement,
                 level,
@@ -417,7 +423,6 @@ function renderOutlineItems(items: OutlineItem[], parent: HTMLElement, className
 
         const itemDiv = document.createElement("div");
         itemDiv.className = `${className}-nav-item`;
-        itemDiv.setAttribute("data-target", item.id);
 
         const expandBtn = document.createElement("span");
         expandBtn.className = `${className}-nav-expand`;
@@ -440,10 +445,7 @@ function renderOutlineItems(items: OutlineItem[], parent: HTMLElement, className
 
         itemDiv.addEventListener("click", (e) => {
             if ((e.target as HTMLElement).classList.contains(`${className}-nav-expand`)) return;
-            const target = document.getElementById(item.id);
-            if (target) {
-                target.scrollIntoView({ behavior: "smooth", block: "start" });
-            }
+            item.element.scrollIntoView({ behavior: "smooth", block: "start" });
         });
 
         expandBtn.addEventListener("click", (e) => {
@@ -460,7 +462,7 @@ function renderOutlineItems(items: OutlineItem[], parent: HTMLElement, className
         if (item.children.length > 0) {
             const childrenUl = document.createElement("ul");
             childrenUl.className = `${className}-nav-children`;
-            if (item.level < defaultLevel) {
+            if (item.level <= defaultLevel) {
                 childrenUl.classList.add("expanded");
                 expandBtn.textContent = "▼";
             }
@@ -476,13 +478,25 @@ function setupScrollSpy(container: HTMLElement, headings: { element: HTMLElement
     const navItems = container.parentElement?.querySelectorAll(`.${className}-nav-item`);
     if (!navItems || navItems.length === 0) return;
 
+    const elementToNavIndex = new Map<HTMLElement, number>();
+    let navIndex = 0;
+    function buildElementMap(items: OutlineItem[]): void {
+        for (const item of items) {
+            elementToNavIndex.set(item.element, navIndex++);
+            if (item.children.length > 0) {
+                buildElementMap(item.children);
+            }
+        }
+    }
+    const outlineTree = buildOutlineTree(headings);
+    buildElementMap(outlineTree);
+
     let ticking = false;
 
     function updateActive(): void {
-        const scrollTop = container.scrollTop;
         const offset = 100;
 
-        let currentId: string | null = null;
+        let currentElement: HTMLElement | null = null;
         for (let i = headings.length - 1; i >= 0; i--) {
             const heading = headings[i];
             const rect = heading.element.getBoundingClientRect();
@@ -490,23 +504,25 @@ function setupScrollSpy(container: HTMLElement, headings: { element: HTMLElement
             const relativeTop = rect.top - containerRect.top;
 
             if (relativeTop <= offset) {
-                currentId = heading.id;
+                currentElement = heading.element;
                 break;
             }
         }
 
-        if (headings.length > 0 && !currentId) {
+        if (headings.length > 0 && !currentElement) {
             const firstHeading = headings[0];
             const rect = firstHeading.element.getBoundingClientRect();
             const containerRect = container.getBoundingClientRect();
             if (rect.top - containerRect.top > offset) {
-                currentId = firstHeading.id;
+                currentElement = firstHeading.element;
             }
         }
 
-        navItems.forEach((item) => {
+        const activeIndex = currentElement ? elementToNavIndex.get(currentElement) : -1;
+
+        navItems.forEach((item, idx) => {
             item.classList.remove("active");
-            if (item.getAttribute("data-target") === currentId) {
+            if (idx === activeIndex) {
                 item.classList.add("active");
                 const navContainer = container.parentElement?.querySelector(`.${className}-nav-container`);
                 if (navContainer && item.getBoundingClientRect) {
@@ -534,7 +550,7 @@ function setupScrollSpy(container: HTMLElement, headings: { element: HTMLElement
     setTimeout(updateActive, 100);
 }
 
-function setupSearch(bodyContainer: HTMLElement, styleContainer: HTMLElement, options: Options): void {
+function setupSearch(bodyContainer: HTMLElement, options: Options): void {
     const className = options.className;
 
     const searchStyle = `
@@ -630,7 +646,8 @@ function setupSearch(bodyContainer: HTMLElement, styleContainer: HTMLElement, op
 
     const searchStyleEl = document.createElement("style");
     searchStyleEl.textContent = searchStyle;
-    styleContainer.appendChild(searchStyleEl);
+    searchStyleEl.setAttribute("data-docx-search-styles", className);
+    document.head.appendChild(searchStyleEl);
 
     const searchContainer = document.createElement("div");
     searchContainer.className = `${className}-search-container`;
@@ -938,25 +955,15 @@ function extractParagraphText(paragraph: HTMLElement, className: string): string
 
     let level: number | null = null;
 
-    const outlineLevelAttr = paragraph.getAttribute('data-outline-level');
-    if (outlineLevelAttr) {
-        const parsedLevel = parseInt(outlineLevelAttr, 10);
-        if (!isNaN(parsedLevel) && parsedLevel >= 1 && parsedLevel <= 9) {
-            level = parsedLevel;
-        }
-    }
-
-    if (level === null) {
-        const classList = Array.from(paragraph.classList);
-        for (const cls of classList) {
-            if (cls.startsWith(`${className}_`)) {
-                const styleId = cls.substring(className.length + 1);
-                if (/^heading\d+$/i.test(styleId)) {
-                    const levelMatch = styleId.match(/heading(\d+)/i);
-                    if (levelMatch) {
-                        level = parseInt(levelMatch[1], 10);
-                        break;
-                    }
+    const classList = Array.from(paragraph.classList);
+    for (const cls of classList) {
+        if (cls.startsWith(`${className}_`)) {
+            const styleId = cls.substring(className.length + 1);
+            if (/^heading\d+$/i.test(styleId)) {
+                const levelMatch = styleId.match(/heading(\d+)/i);
+                if (levelMatch) {
+                    level = parseInt(levelMatch[1], 10);
+                    break;
                 }
             }
         }
