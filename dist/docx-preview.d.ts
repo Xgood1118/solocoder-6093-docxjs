@@ -13,6 +13,19 @@ export type HElement = {
     children?: (HElement | Node | string)[];
 } & Record<string, any>;
 
+export interface UserStyle {
+    selector: string;
+    properties: Record<string, string>;
+}
+
+export interface OutlineItem {
+    id: string;
+    text: string;
+    level: number;
+    element: HTMLElement;
+    children: OutlineItem[];
+}
+
 export interface Options {
     inWrapper: boolean;
     hideWrapperOnPrint: boolean;
@@ -34,6 +47,9 @@ export interface Options {
     renderComments: boolean;
     renderAltChunks: boolean;
     h: (elemOrText: HElement | Node | string) => Node; //experimental, subject to change
+    showNavigation: boolean;
+    navigationDefaultLevel: number;
+    userStyles: UserStyle[];
 }
 
 //stub
@@ -41,4 +57,5 @@ export type WordDocument = any;
 export declare const defaultOptions: Options;
 export declare function parseAsync(data: Blob | any, userOptions?: Partial<Options>): Promise<WordDocument>;
 export declare function renderDocument(document: WordDocument, userOptions?: Partial<Options>): Promise<Node[]>;
-export declare function renderAsync(data: Blob | any, bodyContainer: HTMLElement, styleContainer?: HTMLElement, userOptions?: Partial<Options>): Promise<any>;
+export declare function renderAsync(data: Blob | any, bodyContainer: HTMLElement, styleContainer?: HTMLElement, userOptions?: Partial<Options>): Promise<WordDocument>;
+export declare function exportText(container: HTMLElement, options?: Partial<Options>): string;

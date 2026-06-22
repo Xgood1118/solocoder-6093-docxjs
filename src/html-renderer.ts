@@ -920,6 +920,11 @@ section.${c}>footer { z-index: 1; }
 			result.classList.add(this.numberingClass(numbering.id, numbering.level));
 		}
 
+		const outlineLevel = elem.outlineLevel ?? style?.paragraphProps?.outlineLevel;
+		if (outlineLevel != null && outlineLevel >= 0 && outlineLevel <= 8) {
+			result.setAttribute("data-outline-level", (outlineLevel + 1).toString());
+		}
+
 		return result;
 	}
 
